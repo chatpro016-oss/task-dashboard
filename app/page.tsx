@@ -1,24 +1,35 @@
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { getSupabaseBrowserClient } from "../lib/supabase/browser";
 
 export default function HomePage() {
   const router = useRouter();
 
-  useEffect(() => {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  if (!supabase) {
+    return (
+      <main className="container">
+        <div className="card card-pad">
+          <div className="alert alert-error">
+            Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+          </div>
+        </div>
+      </main>
     );
+  }
 
+  useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      if (data.user) router.replace("/dashboard");
-      else router.replace("/login");
+      router.replace(data.user ? "/dashboard" : "/login");
     })();
-  }, [router]);
+  }, [router, supabase]);
 
-  return <div style={{ padding: 16 }}>Loading…</div>;
+  return (
+    <main className="container">
+      <div className="card card-pad">Loading…</div>
+    </main>
+  );
 }

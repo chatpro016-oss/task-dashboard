@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
+import { getSupabaseBrowserClient } from "../../lib/supabase/browser";
 
 type TaskRow = {
   id: string;
@@ -11,6 +11,8 @@ type TaskRow = {
   image_url: string | null;
   created_at: string;
 };
+
+type ProfileRow = { user_id: string; email: string | null };
 
 const BUCKET = "task-images";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -34,29 +36,48 @@ function getObjectPathFromPublicUrl(imageUrl: string): string | null {
     return decodeURIComponent(imageUrl.slice(idx + marker.length));
   }
 }
+
 export default function DashboardPage() {
   const router = useRouter();
-  const supabase = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    return createClient(url, anon);
-  }, []);
+
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  if (!supabase) {
+    return (
+      <main className="container">
+        <div className="card card-pad">
+          <div className="alert alert-error">
+            Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   const mountedRef = useRef(true);
+
   const [authLoading, setAuthLoading] = useState(true);
   const [userEmail, setUserEmail] = useState("");
   const [userId, setUserId] = useState("");
+
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewMode, setViewMode] = useState<"mine" | "all">("mine");
+
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [profilesMap, setProfilesMap] = useState<Record<string, string>>({});
+
+  // Add task
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [error, setError] = useState("");
+
+  // Delete state
   const [deletingId, setDeletingId] = useState("");
+
+  // Edit state
   const [editingId, setEditingId] = useState("");
   const [editText, setEditText] = useState("");
   const [editFile, setEditFile] = useState<File | null>(null);
@@ -93,7 +114,7 @@ export default function DashboardPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [viewerUrl]);
 
-  // Auth + admin 
+  // Auth + admin check
   useEffect(() => {
     let unsub: { data?: { subscription?: { unsubscribe: () => void } } } | null = null;
 
@@ -113,21 +134,15 @@ export default function DashboardPage() {
       setUserEmail(u.email ?? "");
       setUserId(u.id);
 
-      const { data: adminRow, error: adminErr } = await supabase
+      const { data: adminRow } = await supabase
         .from("admins")
         .select("user_id")
         .eq("user_id", u.id)
         .maybeSingle();
 
-      if (adminErr) {
-        setError(adminErr.message);
-        setIsAdmin(false);
-        setViewMode("mine");
-      } else {
-        const admin = !!adminRow;
-        setIsAdmin(admin);
-        setViewMode(admin ? "all" : "mine");
-      }
+      const admin = !!adminRow;
+      setIsAdmin(admin);
+      setViewMode(admin ? "all" : "mine");
 
       setAuthLoading(false);
     })();
@@ -145,6 +160,23 @@ export default function DashboardPage() {
     return () => unsub?.data?.subscription?.unsubscribe?.();
   }, [router, supabase]);
 
+  async function loadProfilesForTasks(taskRows: TaskRow[]) {
+    const userIds = Array.from(new Set(taskRows.map((t) => t.user_id)));
+    if (userIds.length === 0) {
+      setProfilesMap({});
+      return;
+    }
+
+    const { data, error } = await supabase.from("profiles").select("user_id,email").in("user_id", userIds);
+    if (error) return;
+
+    const map: Record<string, string> = {};
+    (data as ProfileRow[] | null)?.forEach((p) => {
+      map[p.user_id] = p.email ?? "";
+    });
+    setProfilesMap(map);
+  }
+
   async function loadTasks(uid: string, mode: "mine" | "all") {
     setTasksLoading(true);
     setError("");
@@ -157,17 +189,28 @@ export default function DashboardPage() {
     if (mode === "mine") q = q.eq("user_id", uid);
 
     const { data, error: selErr } = await q;
+
     if (selErr) setError(selErr.message);
 
-    setTasks(data ?? []);
+    const rows = (data ?? []) as TaskRow[];
+    setTasks(rows);
+
+    if (mode === "all" && isAdmin) {
+      await loadProfilesForTasks(rows);
+    } else {
+      setProfilesMap({});
+    }
+
     setTasksLoading(false);
   }
 
   useEffect(() => {
     if (!userId) return;
     loadTasks(userId, viewMode);
-  }, [userId, viewMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, viewMode, isAdmin]);
 
+  // Add preview
   useEffect(() => {
     if (!file) {
       setPreviewUrl("");
@@ -273,7 +316,6 @@ export default function DashboardPage() {
   }
 
   async function saveEdit(task: TaskRow) {
-    if (!userId) return;
     setError("");
 
     const trimmed = editText.trim();
@@ -284,24 +326,18 @@ export default function DashboardPage() {
 
     setSavingEdit(true);
     try {
-      // Owner of the task (very important for storage folder)
       const targetUserId = task.user_id;
 
-      // undefined = keep, null = remove, string = replace
-      let newImageUrl: string | null | undefined = undefined;
-
+      let newImageUrl: string | null | undefined = undefined; // undefined keep, null remove, string replace
       if (editFile) newImageUrl = await uploadImage(targetUserId, editFile);
       else if (removeEditImage) newImageUrl = null;
 
       const payload: any = { text: trimmed };
       if (newImageUrl !== undefined) payload.image_url = newImageUrl;
 
-      // Admin policy allows update for any row (if you ran SQL)
       const { error: upErr } = await supabase.from("tasks").update(payload).eq("id", task.id);
-
       if (upErr) throw new Error(upErr.message);
 
-      // cleanup old image if replaced/removed
       if (task.image_url && newImageUrl !== undefined) {
         await tryDeleteStorageByUrl(targetUserId, task.image_url);
       }
@@ -316,7 +352,6 @@ export default function DashboardPage() {
   }
 
   async function onDeleteTask(task: TaskRow) {
-    if (!userId) return;
     setError("");
 
     const ok = window.confirm("Delete this task? (Image will also be deleted if it exists)");
@@ -329,9 +364,7 @@ export default function DashboardPage() {
 
       if (task.image_url) await tryDeleteStorageByUrl(targetUserId, task.image_url);
 
-      // Admin policy allows delete for any row (if you ran SQL)
       const { error: delErr } = await supabase.from("tasks").delete().eq("id", task.id);
-
       if (delErr) throw new Error(delErr.message);
 
       if (editingId === task.id) cancelEdit();
@@ -480,6 +513,8 @@ export default function DashboardPage() {
               const thumbUrl =
                 isEditing && editPreviewUrl ? editPreviewUrl : isEditing && removeEditImage ? "" : t.image_url ?? "";
 
+              const email = viewMode === "all" && isAdmin ? (profilesMap[t.user_id] || "") : "";
+
               return (
                 <div className="item" key={t.id}>
                   <div className="item-row">
@@ -498,7 +533,7 @@ export default function DashboardPage() {
                         {viewMode === "all" ? (
                           <>
                             {" • "}
-                            <b>User:</b> {t.user_id.slice(0, 8)}…
+                            <b>User:</b> {email ? email : `${t.user_id.slice(0, 8)}…`}
                           </>
                         ) : null}
                       </div>
