@@ -34,41 +34,29 @@ function getObjectPathFromPublicUrl(imageUrl: string): string | null {
     return decodeURIComponent(imageUrl.slice(idx + marker.length));
   }
 }
-
 export default function DashboardPage() {
   const router = useRouter();
-
   const supabase = useMemo(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
     if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
     return createClient(url, anon);
   }, []);
-
   const mountedRef = useRef(true);
-
   const [authLoading, setAuthLoading] = useState(true);
   const [userEmail, setUserEmail] = useState("");
   const [userId, setUserId] = useState("");
-
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewMode, setViewMode] = useState<"mine" | "all">("mine");
-
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
-
-  // Add task
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [error, setError] = useState("");
-
-  // Delete state
   const [deletingId, setDeletingId] = useState("");
-
-  // Edit state
   const [editingId, setEditingId] = useState("");
   const [editText, setEditText] = useState("");
   const [editFile, setEditFile] = useState<File | null>(null);
@@ -105,7 +93,7 @@ export default function DashboardPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [viewerUrl]);
 
-  // Auth + admin check
+  // Auth + admin 
   useEffect(() => {
     let unsub: { data?: { subscription?: { unsubscribe: () => void } } } | null = null;
 
@@ -178,10 +166,8 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!userId) return;
     loadTasks(userId, viewMode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, viewMode]);
 
-  // Add preview
   useEffect(() => {
     if (!file) {
       setPreviewUrl("");
@@ -227,7 +213,6 @@ export default function DashboardPage() {
 
   async function tryDeleteStorageByUrl(targetUserId: string, imageUrl: string) {
     const objectPath = getObjectPathFromPublicUrl(imageUrl);
-    // important: delete from OWNER folder, not current user
     if (!objectPath || !objectPath.startsWith(`${targetUserId}/`)) return;
 
     const { error: rmErr } = await supabase.storage.from(BUCKET).remove([objectPath]);
