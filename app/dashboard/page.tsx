@@ -37,8 +37,6 @@ export default async function DashboardPage(props: { searchParams: any }) {
     .maybeSingle();
 
   const isAdmin = !!adminRow;
-
-  // ✅ Works if searchParams is an object OR a Promise
   const sp = await Promise.resolve(props.searchParams);
   const viewMode: "mine" | "all" = isAdmin && sp?.view === "all" ? "all" : "mine";
 

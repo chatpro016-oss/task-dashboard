@@ -16,8 +16,6 @@ export default async function EditTaskPage(props: { params: any; searchParams: a
 
   const { data: uData } = await supabase.auth.getUser();
   if (!uData.user) redirect("/login");
-
-  // ✅ Works if params/searchParams are objects OR Promises
   const p = await Promise.resolve(props.params);
   const sp = await Promise.resolve(props.searchParams);
 

@@ -23,7 +23,7 @@ function getObjectPathFromPublicUrl(imageUrl: string): string | null {
 }
 
 async function requireSupabase() {
-  const supabase = await getSupabaseServerClient(); // ✅ await
+  const supabase = await getSupabaseServerClient();
   if (!supabase) throw new Error("Missing Supabase env vars");
   return supabase;
 }
